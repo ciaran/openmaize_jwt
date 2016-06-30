@@ -5,7 +5,6 @@ defmodule OpenmaizeJWT.KeyManager do
 
   @oneday 86_400_000
   @kids Enum.map 100..105, &to_string/1
-  @key_state Path.join(Application.app_dir(:openmaize_jwt, "priv"), "key_state.json")
 
   def start_link() do
     GenServer.start_link(__MODULE__, [], name: __MODULE__)
@@ -13,11 +12,13 @@ defmodule OpenmaizeJWT.KeyManager do
 
   def init([]) do
     Process.flag(:trap_exit, true)
-    state = case File.read(@key_state) do
-      {:ok, state} -> Poison.decode!(state)
-      {:error, _} -> init_keys()
-    end
-    File.rm @key_state
+
+    state =
+      case store.load do
+        nil -> init_keys()
+        state -> state
+      end
+
     Process.send_after(self(), :rotate, Config.keyrotate_days * @oneday)
     {:ok, state}
   end
@@ -55,7 +56,7 @@ defmodule OpenmaizeJWT.KeyManager do
   end
 
   def terminate(_reason, state) do
-    File.write @key_state, Poison.encode!(state)
+    store.save(state)
     :ok
   end
 
@@ -73,5 +74,9 @@ defmodule OpenmaizeJWT.KeyManager do
     key_map = for kid <- @kids, into: %{}, do: {kid, nil}
     %{key_map | "100" => gen_key()}
     |> Map.merge(%{"current_kid" => "100", "kid_index" => 0})
+  end
+
+  defp store do
+    Application.get_env(:openmaize_jwt, :store, OpenmaizeJWT.KeyStore.File)
   end
 end
